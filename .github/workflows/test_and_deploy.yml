@@ -37,40 +37,70 @@ jobs:
         
     - name: Build and install
       run: |
-        uv run maturin develop  --uv
+        uv run maturin develop --uv
         
     - name: Run tests
       run: |
         uv run pytest
 
-  deploy:
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
     needs: test
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
-        target: [x86_64, aarch64]
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Build wheels
-      uses: PyO3/maturin-action@v1
-      with:
-        target: ${{ matrix.target }}
-        args: --release --strip --compatibility manylinux2014
-        manylinux: auto
-        container: off
-        
-    - name: Install uv
-      run: |
-        python -m pip install --upgrade pip
-        pip install uv
-        uv sync
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["cp310", "cp311"]
+        include:
+          - os: ubuntu-latest
+            platform: manylinux_x86_64
+          - os: windows-latest
+            platform: win_amd64
+          - os: macos-latest
+            platform: macosx_*
 
-    - name: Upload to PyPI
-      env:
-        MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
-      run: |
-        uv pip install maturin
-        uv run maturin upload --skip-existing target/wheels/*
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          manylinux: auto
+          args: --release --strip
+          python-version: ${{ matrix.python-version }}
+          before-script-linux: |
+            yum install -y pkg-config openssl-devel
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: wheels-${{ matrix.platform }}-${{ matrix.python-version }}
+          path: target/wheels/*.whl
+
+  upload_pypi:
+    name: Upload wheels to PyPI
+    needs: build_wheels
+    runs-on: ubuntu-latest
+    environment: pypi
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          path: dist
+
+      - name: Install uv
+        run: |
+          python -m pip install --upgrade pip
+          pip install uv
+          uv sync
+
+      - name: Publish to PyPI
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          uv pip install --system twine
+          find dist/wheels-* -name '*.whl' -exec mv {} dist/ \;
+          twine upload --skip-existing dist/*.whl
