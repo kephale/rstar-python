@@ -37,11 +37,11 @@ jobs:
         
     - name: Build and install
       run: |
-        maturin develop
+        uv run maturin develop
         
     - name: Run tests
       run: |
-        pytest
+        uv run pytest
 
   deploy:
     needs: test
@@ -74,4 +74,4 @@ jobs:
         MATURIN_PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
       run: |
         uv pip install maturin
-        maturin upload --skip-existing target/wheels/*
+        uv run maturin upload --skip-existing target/wheels/*
