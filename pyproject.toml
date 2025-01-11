@@ -4,12 +4,12 @@ build-backend = "maturin"
 
 [project]
 name = "rstar-python"
-version = "0.1.0"
+version = "0.0.1"
 description = "Python bindings for the rstar R*-tree spatial index"
 readme = "README.md"
-requires-python = ">=3.7"
+requires-python = ">=3.10"
 authors = [
-    { name = "Your Name", email = "your.email@example.com" }
+    { name = "Kyle Harrington", email = "kyle@kyleharrington.com" }
 ]
 classifiers = [
     "Development Status :: 3 - Alpha",
