@@ -47,21 +47,20 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    strategy:
+      matrix:
+        target: [x86_64, aarch64]
     
     steps:
     - uses: actions/checkout@v3
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.11"
     
     - name: Build wheels
       uses: PyO3/maturin-action@v1
       with:
-        target: x86_64
-        args: --release --strip
-        singlefile: true
+        target: ${{ matrix.target }}
+        args: --release --strip --compatibility manylinux2014
+        manylinux: auto
+        container: off
         
     - name: Install uv
       run: |
