@@ -31,4 +31,3 @@ dependencies = [
 features = ["pyo3/extension-module"]
 python-source = "python"
 module-name = "rstar_python.rstar_python"
-bindings = "pyo3"

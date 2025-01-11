@@ -47,47 +47,35 @@ jobs:
     name: Build wheels on ${{ matrix.os }}
     needs: test
     runs-on: ${{ matrix.os }}
-    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["cp310", "cp311"]
-        include:
-          - os: ubuntu-latest
-            platform: manylinux_x86_64
-          - os: windows-latest
-            platform: win_amd64
-          - os: macos-latest
-            platform: macosx_*
 
     steps:
       - uses: actions/checkout@v3
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: x86_64
-          manylinux: auto
-          args: --release --strip
-          python-version: ${{ matrix.python-version }}
-          before-script-linux: |
-            yum install -y pkg-config openssl-devel
+        uses: pypa/cibuildwheel@v2.16.2
+        env:
+          CIBW_BUILD: "cp310-* cp311-*"
+          CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          CIBW_ARCHS_LINUX: "x86_64"
+          CIBW_BEFORE_BUILD: "pip install maturin"
 
       - uses: actions/upload-artifact@v3
         with:
-          name: wheels-${{ matrix.platform }}-${{ matrix.python-version }}
-          path: target/wheels/*.whl
+          path: ./wheelhouse/*.whl
 
-  upload_pypi:
-    name: Upload wheels to PyPI
-    needs: build_wheels
+  publish:
+    needs: [build_wheels]
     runs-on: ubuntu-latest
-    environment: pypi
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
 
     steps:
       - uses: actions/download-artifact@v3
         with:
+          name: artifact
           path: dist
 
       - name: Install uv
@@ -102,5 +90,4 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           uv pip install --system twine
-          find dist/wheels-* -name '*.whl' -exec mv {} dist/ \;
-          twine upload --skip-existing dist/*.whl
+          python -m twine upload --skip-existing dist/*
