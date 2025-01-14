@@ -24,6 +24,8 @@ jobs:
         
     - name: Install Rust
       uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: x86_64-unknown-linux-gnu
 
     - name: Install uv
       run: |
@@ -53,10 +55,13 @@ jobs:
         include:
           - os: ubuntu-latest
             platform: linux
+            target: x86_64-unknown-linux-gnu
           - os: windows-latest
             platform: windows
+            target: x86_64-pc-windows-msvc
           - os: macos-latest
             platform: macos
+            target: x86_64-apple-darwin
 
     steps:
       - uses: actions/checkout@v3
@@ -66,13 +71,10 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Rust (Windows)
-        if: matrix.platform == 'windows'
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        
-      - name: Install Rust (Unix)
-        if: matrix.platform != 'windows'
-        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
 
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel
@@ -82,10 +84,13 @@ jobs:
           CIBW_BUILD: "cp310-* cp311-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux*"
           CIBW_PLATFORM: ${{ matrix.platform }}
-          CIBW_BEFORE_BUILD: pip install maturin
+          CIBW_BEFORE_BUILD: |
+            pip install maturin
+            rustup target add ${{ matrix.target }}
           CIBW_ARCHS_MACOS: x86_64 arm64
           CIBW_ARCHS_LINUX: x86_64
           CIBW_ARCHS_WINDOWS: AMD64
+          CIBW_ENVIRONMENT: CARGO_BUILD_TARGET=${{ matrix.target }}
         run: python -m cibuildwheel --output-dir wheelhouse
 
       - uses: actions/upload-artifact@v3
