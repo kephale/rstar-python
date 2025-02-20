@@ -5,23 +5,28 @@ on:
     branches: [ main ]
     tags: ["v*"]
   pull_request:
-    branches: [ main ]
+    branches: [ "**" ]
+
+concurrency:
+  group: wheel-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   MACOSX_DEPLOYMENT_TARGET: "10.12"
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python-version: ["3.10", "3.11"]
         
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
     
     - name: Set up Python ${{ matrix.python-version }}
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
         
@@ -36,43 +41,88 @@ jobs:
     - name: Create virtual environment
       run: |
         python -m venv .venv
-        source .venv/bin/activate
+        ${{ runner.os == 'Windows' && '.venv\Scripts\activate' || 'source .venv/bin/activate' }}
         pip install maturin pytest numpy
 
     - name: Build and install
       run: |
-        source .venv/bin/activate
+        ${{ runner.os == 'Windows' && '.venv\Scripts\activate' || 'source .venv/bin/activate' }}
         maturin develop
         
     - name: Run tests
       run: |
-        source .venv/bin/activate
+        ${{ runner.os == 'Windows' && '.venv\Scripts\activate' || 'source .venv/bin/activate' }}
         pytest
+
+  cargo-test:
+    name: Run cargo tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      - name: Run tests
+        run: cargo test --all-features --workspace
+
+  make_sdist:
+    needs: [test, cargo-test]
+    name: Make SDist
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
+
+      - name: Build SDist
+        run: pipx run build --sdist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pypi-sdist
+          path: dist/*.tar.gz
 
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
-    needs: test
+    needs: [test, cargo-test]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.10", "3.11"]
+        os: [ubuntu-latest, windows-latest, macos-13, macos-14]
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            interpreter: cp310-manylinux_x86_64 cp311-manylinux_x86_64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-          - os: macos-latest
+            interpreter: cp310-win_amd64 cp311-win_amd64
+          - os: macos-13
             target: x86_64-apple-darwin
+            interpreter: cp310-macosx_x86_64 cp311-macosx_x86_64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            interpreter: cp310-macosx_arm64 cp311-macosx_arm64
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: true
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.11"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -80,31 +130,39 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build wheels
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          args: --release --out dist
-          sccache: true
-          manylinux: auto
+        uses: pypa/cibuildwheel@v2.22.0
+        env:
+          CIBW_BUILD: ${{ matrix.interpreter }}
+          CIBW_ARCHS_MACOS: "x86_64 arm64"
+          MACOSX_DEPLOYMENT_TARGET: "10.12"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}-${{ matrix.python-version }}
-          path: dist
+          name: pypi-wheels-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
 
-  publish:
-    needs: [build_wheels]
+  upload_pypi:
+    name: Upload to PyPI
+    needs: [build_wheels, make_sdist]
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rstar-python
+    permissions:
+      id-token: write
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-
+    
     steps:
       - uses: actions/download-artifact@v4
         with:
+          pattern: pypi-*
           path: dist
+          merge-multiple: true
 
-      - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Generate artifact attestations
+        uses: actions/attest-build-provenance@v2.2.0
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
-          packages-dir: dist/wheels-*
+          subject-path: "dist/*"
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
