@@ -6,6 +6,7 @@ on:
     tags: ["v*"]
   pull_request:
     branches: [ "**" ]
+  workflow_dispatch:  # Allow manual trigger
 
 concurrency:
   group: wheel-${{ github.ref }}
@@ -20,7 +21,7 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        python-version: ["3.10", "3.11"]
+        python-version: ["3.10", "3.11", "3.12"]
         
     steps:
     - uses: actions/checkout@v4
@@ -38,21 +39,13 @@ jobs:
         python -m pip install --upgrade pip
         pip install maturin pytest numpy
         
-    - name: Create virtual environment
-      run: |
-        python -m venv .venv
-        ${{ runner.os == 'Windows' && '.venv\Scripts\activate' || 'source .venv/bin/activate' }}
-        pip install maturin pytest numpy
-
     - name: Build and install
       run: |
-        ${{ runner.os == 'Windows' && '.venv\Scripts\activate' || 'source .venv/bin/activate' }}
-        maturin develop
+        maturin develop --release
         
     - name: Run tests
       run: |
-        ${{ runner.os == 'Windows' && '.venv\Scripts\activate' || 'source .venv/bin/activate' }}
-        pytest
+        pytest python/tests -v
 
   cargo-test:
     name: Run cargo tests
@@ -83,7 +76,8 @@ jobs:
           submodules: true
 
       - name: Build SDist
-        run: pipx run build --sdist
+        run: |
+          pipx run --spec maturin maturin sdist
 
       - uses: actions/upload-artifact@v4
         with:
@@ -99,19 +93,6 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-13, macos-14]
-        include:
-          - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
-            interpreter: cp310-manylinux_x86_64 cp311-manylinux_x86_64
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            interpreter: cp310-win_amd64 cp311-win_amd64
-          - os: macos-13
-            target: x86_64-apple-darwin
-            interpreter: cp310-macosx_x86_64 cp311-macosx_x86_64
-          - os: macos-14
-            target: aarch64-apple-darwin
-            interpreter: cp310-macosx_arm64 cp311-macosx_arm64
 
     steps:
       - uses: actions/checkout@v4
@@ -124,23 +105,40 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - name: Build wheels - Linux
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@v1
         with:
-          targets: ${{ matrix.target }}
-
-      - name: Build wheels
-        uses: pypa/cibuildwheel@v2.22.0
-        env:
-          CIBW_BUILD: ${{ matrix.interpreter }}
-          CIBW_ARCHS_MACOS: "x86_64 arm64"
-          MACOSX_DEPLOYMENT_TARGET: "10.12"
+          target: x86_64
+          args: --release --out dist --interpreter 3.10 3.11 3.12
+          manylinux: auto
+          
+      - name: Build wheels - Windows
+        if: runner.os == 'Windows'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x64
+          args: --release --out dist --interpreter 3.10 3.11 3.12
+          
+      - name: Build wheels - macOS (Intel)
+        if: matrix.os == 'macos-13'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: x86_64
+          args: --release --out dist --interpreter 3.10 3.11 3.12
+          
+      - name: Build wheels - macOS (Apple Silicon)
+        if: matrix.os == 'macos-14'
+        uses: PyO3/maturin-action@v1
+        with:
+          target: aarch64
+          args: --release --out dist --interpreter 3.10 3.11 3.12
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
-          name: pypi-wheels-${{ matrix.os }}
-          path: ./wheelhouse/*.whl
+          name: pypi-wheels-${{ matrix.os }}-${{ github.run_number }}
+          path: dist/*.whl
 
   upload_pypi:
     name: Upload to PyPI
@@ -160,9 +158,18 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: List artifacts
+        run: ls -la dist/
+
       - name: Generate artifact attestations
-        uses: actions/attest-build-provenance@v2.2.0
+        uses: actions/attest-build-provenance@v1
         with:
           subject-path: "dist/*"
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          verify-metadata: true
+          skip-existing: false
+          verbose: true
