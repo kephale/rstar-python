@@ -1,7 +1,11 @@
 [package]
 name = "rstar-python"
-version = "0.0.2"
+version = "0.0.2"  # Update version to match
 edition = "2021"
+license = "MIT"  # Add license field
+description = "Python bindings for the rstar R*-tree spatial index"
+repository = "https://github.com/kephale/rstar-python"
+homepage = "https://github.com/kephale/rstar-python"
 
 [lib]
 name = "rstar_python"

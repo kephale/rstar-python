@@ -4,9 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "rstar-python"
-version = "0.0.2"
+version = "0.0.2"  # Update version
 description = "Python bindings for the rstar R*-tree spatial index"
 readme = "README.md"
+license = {text = "MIT"}  # Modern license field
 requires-python = ">=3.10"
 authors = [
     { name = "Kyle Harrington", email = "kyle@kyleharrington.com" }
@@ -18,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Rust",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
@@ -26,6 +28,11 @@ classifiers = [
 dependencies = [
     "numpy>=1.21.6",
 ]
+
+[project.urls]
+Homepage = "https://github.com/kephale/rstar-python"
+Repository = "https://github.com/kephale/rstar-python"
+Issues = "https://github.com/kephale/rstar-python/issues"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]
