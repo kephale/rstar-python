@@ -78,8 +78,9 @@ jobs:
           - { os: ubuntu-latest, platform: linux, target: x86_64, manylinux: musllinux_1_2 }
           - { os: ubuntu-latest, platform: linux, target: aarch64, manylinux: musllinux_1_2 }
           - { os: windows-latest, platform: windows, target: x64 }
-          - { os: macos-13, platform: macos, target: x86_64 }
-          - { os: macos-14, platform: macos, target: aarch64 }
+          # One universal2 wheel (Intel + Apple Silicon) cross-built on the
+          # fast arm64 runner — avoids the scarce/slow macos-13 Intel runners.
+          - { os: macos-14, platform: macos, target: universal2-apple-darwin }
     steps:
       - uses: actions/checkout@v4
       - name: Build wheels
@@ -125,11 +126,17 @@ jobs:
         with:
           name: sdist
           path: dist
+      # A clean interpreter so a fresh `packaging` is used: the runner's
+      # system packaging is too old to recognise the Metadata 2.4
+      # `License-File` field and makes `twine check` spuriously fail.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: List and check
         run: |
           ls -la dist/
           echo "wheels: $(ls dist/*.whl | wc -l), sdists: $(ls dist/*.tar.gz | wc -l)"
-          pip install twine
+          python -m pip install --upgrade twine packaging
           twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
