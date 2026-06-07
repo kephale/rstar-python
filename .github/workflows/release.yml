@@ -1,0 +1,218 @@
+name: Release
+
+# Publish to PyPI on a version tag (e.g. `v0.1.0`), or to TestPyPI on demand.
+#
+# Tag flow:
+#   1. Bump the version in pyproject.toml + Cargo.toml and update CHANGELOG.md.
+#   2. git tag v0.1.0 && git push --tags
+#   3. This workflow verifies the tag matches the version, runs the tests,
+#      builds wheels + sdist, publishes to PyPI via trusted publishing, and
+#      creates a GitHub Release with notes from the changelog.
+#
+# TestPyPI flow:
+#   Actions -> Release -> Run workflow -> target = testpypi.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        required: true
+        default: testpypi
+        type: choice
+        options: [testpypi, pypi]
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # Fail fast if the tag doesn't match the packaged version.
+  check-version:
+    name: Check version matches tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify tag == pyproject == Cargo version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pyproject=$(grep -m1 '^version = ' pyproject.toml | sed -E 's/.*"(.*)".*/\1/')
+          cargo=$(grep -m1 '^version = ' Cargo.toml | sed -E 's/.*"(.*)".*/\1/')
+          echo "tag=$tag  pyproject=$pyproject  cargo=$cargo"
+          if [ "$tag" != "$pyproject" ] || [ "$tag" != "$cargo" ]; then
+            echo "::error::Tag ($tag) must match pyproject.toml ($pyproject) and Cargo.toml ($cargo)"
+            exit 1
+          fi
+
+  # Native test gate so we never publish broken code.
+  test:
+    name: Test (Linux)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build and test
+        run: |
+          python -m pip install --upgrade pip
+          pip install maturin pytest numpy
+          maturin build --release --out dist
+          pip install --no-index --find-links dist rstar-python
+          pytest python/tests -v
+
+  build-wheels:
+    name: Wheel ${{ matrix.platform }} ${{ matrix.target }} ${{ matrix.manylinux }}
+    needs: [test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, platform: linux, target: x86_64, manylinux: auto }
+          - { os: ubuntu-latest, platform: linux, target: aarch64, manylinux: auto }
+          - { os: ubuntu-latest, platform: linux, target: x86_64, manylinux: musllinux_1_2 }
+          - { os: ubuntu-latest, platform: linux, target: aarch64, manylinux: musllinux_1_2 }
+          - { os: windows-latest, platform: windows, target: x64 }
+          - { os: macos-13, platform: macos, target: x86_64 }
+          - { os: macos-14, platform: macos, target: aarch64 }
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build wheels
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux }}
+          args: --release --out dist
+          sccache: "true"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}-${{ matrix.target }}-${{ matrix.manylinux || 'native' }}
+          path: dist/*.whl
+
+  build-sdist:
+    name: Source distribution
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Gather everything and validate before any publish step touches an index.
+  collect:
+    name: Collect and check artifacts
+    needs: [build-wheels, build-sdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: "wheels-*"
+          path: dist
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+      - name: List and check
+        run: |
+          ls -la dist/
+          echo "wheels: $(ls dist/*.whl | wc -l), sdists: $(ls dist/*.tar.gz | wc -l)"
+          pip install twine
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/*
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [collect]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/rstar-python
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          packages-dir: dist/
+          # TestPyPI rejects PEP 740 attestations; disable for it.
+          attestations: false
+          skip-existing: true
+          verbose: true
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [check-version, collect]
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'pypi')
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/rstar-python
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Publish
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          attestations: true
+          verbose: true
+
+  github-release:
+    name: GitHub Release
+    needs: [publish-pypi]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+      - name: Extract changelog section
+        id: notes
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          # Pull the section for this version out of CHANGELOG.md.
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" {grab=1; next}
+            grab && /^## \[/ {exit}
+            grab {print}
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then echo "See CHANGELOG.md for details." > notes.md; fi
+          echo "Release notes:"; cat notes.md
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          body_path: notes.md
+          files: dist/*
+          fail_on_unmatched_files: true
