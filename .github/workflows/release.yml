@@ -126,11 +126,17 @@ jobs:
         with:
           name: sdist
           path: dist
+      # A clean interpreter so a fresh `packaging` is used: the runner's
+      # system packaging is too old to recognise the Metadata 2.4
+      # `License-File` field and makes `twine check` spuriously fail.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
       - name: List and check
         run: |
           ls -la dist/
           echo "wheels: $(ls dist/*.whl | wc -l), sdists: $(ls dist/*.tar.gz | wc -l)"
-          pip install twine
+          python -m pip install --upgrade twine packaging
           twine check dist/*
       - uses: actions/upload-artifact@v4
         with:
