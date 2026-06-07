@@ -1,8 +1,8 @@
 [package]
 name = "rstar-python"
-version = "0.0.2"  # Update version to match
+version = "0.1.0"
 edition = "2021"
-license = "MIT"  # Add license field
+license = "MIT"
 description = "Python bindings for the rstar R*-tree spatial index"
 repository = "https://github.com/kephale/rstar-python"
 homepage = "https://github.com/kephale/rstar-python"
@@ -12,5 +12,6 @@ name = "rstar_python"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.19", features = ["extension-module"] }
-rstar = "0.12"
+pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
+numpy = "0.28"
+rstar = { version = "0.13", features = ["serde"] }

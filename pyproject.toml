@@ -4,10 +4,10 @@ build-backend = "maturin"
 
 [project]
 name = "rstar-python"
-version = "0.0.2"  # Update version
+version = "0.1.0"
 description = "Python bindings for the rstar R*-tree spatial index"
 readme = "README.md"
-license = {text = "MIT"}  # Modern license field
+license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
     { name = "Kyle Harrington", email = "kyle@kyleharrington.com" }
@@ -20,7 +20,10 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries",
     "Operating System :: POSIX :: Linux",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
