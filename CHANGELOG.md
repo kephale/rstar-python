@@ -7,17 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-21
+
 ### Added
 - `PyRTree.locate_in_envelope_ids()` for stored ids within a closed bounding box.
 - `PyRTree.remove_item()` for exact point-and-id removal when points coincide.
 - `PyBBoxRTree`, a 2–8 dimensional index for stored axis-aligned bounding boxes,
-  with insertion, bulk loading, closed-boundary intersection, and exact removal.
+  with insertion, optimized NumPy bulk loading, closed-boundary intersection,
+  and exact removal.
 - `PyBBoxRTree.intersection_batch()` for vectorised queries with CSR-style output.
-
-### Changed
-- Bounding-box NumPy bulk loads avoid per-row allocations and release the GIL
-  while building the native tree.
-- Bounding-box intersections use rstar's allocation-free internal traversal.
+- Bounding-box bulk loading and batched intersections release the GIL while
+  running native tree operations.
 
 ## [0.1.0] - 2026-06-07
 
