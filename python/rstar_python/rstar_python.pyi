@@ -104,7 +104,7 @@ class PyBBoxRTree:
         self,
         min_corners: Sequence[Sequence[float]] | npt.NDArray[np.float64],
         max_corners: Sequence[Sequence[float]] | npt.NDArray[np.float64],
-        data: Sequence[int] | None = ...,
+        data: Sequence[int] | npt.NDArray[np.int64] | None = ...,
     ) -> None:
         """Build from bounding boxes at once, replacing existing contents."""
 
@@ -112,6 +112,21 @@ class PyBBoxRTree:
         self, min_corner: Sequence[float], max_corner: Sequence[float]
     ) -> list[int]:
         """Ids of boxes whose closed bounds overlap or touch the query."""
+
+    def intersection_numpy(
+        self, min_corner: Sequence[float], max_corner: Sequence[float]
+    ) -> npt.NDArray[np.int64]:
+        """Intersection ids as an int64 array without Python integer boxing."""
+
+    def intersection_batch(
+        self,
+        min_corners: npt.NDArray[np.float64],
+        max_corners: npt.NDArray[np.float64],
+    ) -> tuple[npt.NDArray[np.int64], npt.NDArray[np.int64]]:
+        """Query many boxes, returning ids and CSR row offsets.
+
+        Results for row ``i`` are ``ids[offsets[i]:offsets[i + 1]]``.
+        """
 
     def remove_item(
         self,

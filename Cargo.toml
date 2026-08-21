@@ -14,4 +14,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
 numpy = "0.28"
-rstar = { version = "0.13", features = ["serde"] }
+rstar = "0.13"

@@ -30,14 +30,41 @@ def test_insert_ids_and_intersection_semantics():
 def test_bulk_load_numpy_4d_replaces_contents():
     tree = PyBBoxRTree(dims=4)
     tree.insert([0.0] * 4, [1.0] * 4, data=99)
-    mins = np.array([[0.0] * 4, [5.0] * 4], dtype=np.float64)
-    maxs = np.array([[2.0] * 4, [6.0] * 4], dtype=np.float64)
+    # Fortran order exercises the strided ndarray fast path.
+    mins = np.asfortranarray([[0.0] * 4, [5.0] * 4], dtype=np.float64)
+    maxs = np.asfortranarray([[2.0] * 4, [6.0] * 4], dtype=np.float64)
     tree.bulk_load(mins, maxs, data=[20, 30])
 
     assert len(tree) == 2
     assert tree.intersection([1.0] * 4, [1.0] * 4) == [20]
     assert tree.intersection([5.5] * 4, [5.5] * 4) == [30]
     assert tree.insert([10.0] * 4, [11.0] * 4) == 100
+
+
+def test_numpy_and_batched_intersection_results():
+    tree = PyBBoxRTree(dims=2)
+    mins = np.array([[0.0, 0.0], [2.0, 2.0], [8.0, 8.0]], dtype=np.float64)
+    maxs = np.array([[4.0, 4.0], [6.0, 6.0], [9.0, 9.0]], dtype=np.float64)
+    strided_ids = np.array([10, -1, 20, -1, 30], dtype=np.int64)[::2]
+    tree.bulk_load(mins, maxs, data=strided_ids)
+
+    result = tree.intersection_numpy([3.0, 3.0], [8.0, 8.0])
+    assert result.dtype == np.int64
+    assert sorted(result.tolist()) == [10, 20, 30]
+
+    query_mins = np.asfortranarray([[3.0, 3.0], [6.1, 6.1]], dtype=np.float64)
+    query_maxs = np.asfortranarray([[8.0, 8.0], [7.9, 7.9]], dtype=np.float64)
+    ids, offsets = tree.intersection_batch(query_mins, query_maxs)
+    assert ids.dtype == offsets.dtype == np.int64
+    assert offsets.tolist() == [0, 3, 3]
+    assert sorted(ids[offsets[0] : offsets[1]].tolist()) == [10, 20, 30]
+
+    empty_ids, empty_offsets = tree.intersection_batch(
+        np.empty((0, 2), dtype=np.float64),
+        np.empty((0, 2), dtype=np.float64),
+    )
+    assert empty_ids.tolist() == []
+    assert empty_offsets.tolist() == [0]
 
 
 def test_remove_item_distinguishes_coincident_boxes():
@@ -78,4 +105,9 @@ def test_dimension_row_and_id_mismatch_errors():
         tree.bulk_load(
             np.empty((0, 4), dtype=np.float64),
             np.empty((0, 2), dtype=np.float64),
+        )
+    with pytest.raises(ValueError, match="same number of rows"):
+        tree.intersection_batch(
+            np.empty((1, 2), dtype=np.float64),
+            np.empty((2, 2), dtype=np.float64),
         )
