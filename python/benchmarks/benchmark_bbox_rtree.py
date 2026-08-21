@@ -61,21 +61,14 @@ def run_benchmark(
             for lower, upper in zip(query_mins, query_maxs, strict=True)
         )
 
-    def scalar_numpy() -> int:
-        return sum(
-            len(tree.intersection_numpy(lower, upper))
-            for lower, upper in zip(query_mins, query_maxs, strict=True)
-        )
-
     def batch() -> int:
         result_ids, offsets = tree.intersection_batch(query_mins, query_maxs)
         assert offsets[-1] == len(result_ids)
         return len(result_ids)
 
     hits = scalar_list()
-    assert scalar_numpy() == batch() == hits
+    assert batch() == hits
     scalar_list_seconds = median_seconds(scalar_list, repeats)
-    scalar_numpy_seconds = median_seconds(scalar_numpy, repeats)
     batch_seconds = median_seconds(batch, repeats)
 
     return {
@@ -85,7 +78,6 @@ def run_benchmark(
         "hits": hits,
         "bulk_seconds": bulk_seconds,
         "scalar_list_seconds": scalar_list_seconds,
-        "scalar_numpy_seconds": scalar_numpy_seconds,
         "batch_seconds": batch_seconds,
         "batch_speedup_over_list": scalar_list_seconds / batch_seconds,
     }

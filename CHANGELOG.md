@@ -12,7 +12,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `PyRTree.remove_item()` for exact point-and-id removal when points coincide.
 - `PyBBoxRTree`, a 2–8 dimensional index for stored axis-aligned bounding boxes,
   with insertion, bulk loading, closed-boundary intersection, and exact removal.
-- `PyBBoxRTree.intersection_numpy()` for object-free NumPy intersection results.
 - `PyBBoxRTree.intersection_batch()` for vectorised queries with CSR-style output.
 
 ### Changed

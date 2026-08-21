@@ -113,11 +113,6 @@ class PyBBoxRTree:
     ) -> list[int]:
         """Ids of boxes whose closed bounds overlap or touch the query."""
 
-    def intersection_numpy(
-        self, min_corner: Sequence[float], max_corner: Sequence[float]
-    ) -> npt.NDArray[np.int64]:
-        """Intersection ids as an int64 array without Python integer boxing."""
-
     def intersection_batch(
         self,
         min_corners: npt.NDArray[np.float64],

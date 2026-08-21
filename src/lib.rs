@@ -682,19 +682,6 @@ impl PyBBoxRTree {
         })
     }
 
-    /// NumPy-returning intersection query, avoiding one Python object per id.
-    fn intersection_numpy<'py>(
-        &self,
-        py: Python<'py>,
-        min_corner: Vec<f64>,
-        max_corner: Vec<f64>,
-    ) -> PyResult<Bound<'py, PyArray1<i64>>> {
-        let ids = dispatch_bbox!(&self.tree, t => {
-            g_bbox_intersection(t, &min_corner, &max_corner)?
-        });
-        Ok(ids.into_pyarray(py))
-    }
-
     /// Query many boxes at once, returning ids and CSR row offsets.
     ///
     /// Results for query row ``i`` are ``ids[offsets[i]:offsets[i + 1]]``.

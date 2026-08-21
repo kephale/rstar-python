@@ -82,9 +82,6 @@ boxes.insert([2.0, 1.0], [3.0, 3.0])
 # Returns both ids: intersection uses closed bounds, so touching counts.
 boxes.intersection([1.0, 1.0], [2.0, 2.0])
 
-# Avoid Python integer boxing when consuming a large result.
-ids = boxes.intersection_numpy([1.0, 1.0], [2.0, 2.0])
-
 # Query many boxes in one native call. Results use CSR-style row offsets:
 # the matches for row i are ids[offsets[i]:offsets[i + 1]].
 query_mins = np.array([[0.0, 0.0], [5.0, 5.0]], dtype=np.float64)
@@ -110,7 +107,7 @@ boxes.bulk_load(
 - Radius search and axis-aligned bounding-box (envelope) queries
 - Vectorised point `query` / `query_radius` and bounding-box
   `intersection_batch` queries over NumPy arrays
-- NumPy-native intersection results for dense queries without Python integer boxing
+- NumPy-native batched intersection results without Python integer boxing
 - Bulk loading (lists or NumPy arrays) for fast construction
 - Type stubs (`py.typed`) for IDE and `mypy` support
 - Built on the fast Rust [rstar](https://github.com/georust/rstar) library

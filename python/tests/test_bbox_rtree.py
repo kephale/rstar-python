@@ -48,10 +48,6 @@ def test_numpy_and_batched_intersection_results():
     strided_ids = np.array([10, -1, 20, -1, 30], dtype=np.int64)[::2]
     tree.bulk_load(mins, maxs, data=strided_ids)
 
-    result = tree.intersection_numpy([3.0, 3.0], [8.0, 8.0])
-    assert result.dtype == np.int64
-    assert sorted(result.tolist()) == [10, 20, 30]
-
     query_mins = np.asfortranarray([[3.0, 3.0], [6.1, 6.1]], dtype=np.float64)
     query_maxs = np.asfortranarray([[8.0, 8.0], [7.9, 7.9]], dtype=np.float64)
     ids, offsets = tree.intersection_batch(query_mins, query_maxs)
