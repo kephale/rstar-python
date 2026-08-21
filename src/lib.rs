@@ -590,7 +590,12 @@ impl PyRTree {
 ///
 /// Each box carries an integer id (auto-assigned or supplied via ``data``).
 /// Intersection queries return ids for every box whose closed bounds overlap or
-/// touch the query bounds.
+/// touch the query bounds. Corner arguments are normalized per axis, so either
+/// corner order is accepted for inserts and queries.
+///
+/// Bulk loading and batched intersections release the GIL during native tree
+/// operations. Callers must synchronize mutation of the same instance while a
+/// batch is in flight; otherwise PyO3 may raise ``RuntimeError: Already borrowed``.
 #[pyclass]
 struct PyBBoxRTree {
     tree: BBoxTree,

@@ -85,7 +85,14 @@ class PyRTree:
     def __repr__(self) -> str: ...
 
 class PyBBoxRTree:
-    """An R*-tree spatial index over axis-aligned bounding boxes."""
+    """An R*-tree spatial index over axis-aligned bounding boxes.
+
+    Corner arguments are normalized per axis, so either corner order is
+    accepted for inserts and queries. Bulk loading and batched intersections
+    release the GIL during native tree operations. Synchronize mutation of the
+    same instance while a batch is in flight to avoid an ``Already borrowed``
+    runtime error.
+    """
 
     def __init__(self, dims: int) -> None: ...
     @property
