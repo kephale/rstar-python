@@ -448,7 +448,7 @@ impl PyRTree {
     fn insert(&mut self, point: Vec<f64>, data: Option<i64>) -> PyResult<i64> {
         let id = data.unwrap_or(self.next_id);
         dispatch!(&mut self.tree, t => g_insert(t, &point, id)?);
-        self.next_id = self.next_id.max(id + 1);
+        self.next_id = self.next_id.max(id.saturating_add(1));
         Ok(id)
     }
 
@@ -478,7 +478,7 @@ impl PyRTree {
         };
         let max_id = ids.iter().copied().max().unwrap_or(-1);
         self.tree = Tree::bulk(self.tree.dims(), &pts, &ids)?;
-        self.next_id = self.next_id.max(max_id + 1);
+        self.next_id = self.next_id.max(max_id.saturating_add(1));
         Ok(())
     }
 
@@ -620,7 +620,7 @@ impl PyBBoxRTree {
         dispatch_bbox!(&mut self.tree, t => {
             g_bbox_insert(t, &min_corner, &max_corner, id)?
         });
-        self.next_id = self.next_id.max(id + 1);
+        self.next_id = self.next_id.max(id.saturating_add(1));
         Ok(id)
     }
 
@@ -653,7 +653,7 @@ impl PyBBoxRTree {
 
             let max_id = max_bbox_id(ids.as_deref(), num_boxes);
             self.tree = BBoxTree::bulk_array(py, dims, mins, maxs, ids.as_deref())?;
-            self.next_id = self.next_id.max(max_id + 1);
+            self.next_id = self.next_id.max(max_id.saturating_add(1));
             return Ok(());
         }
 
@@ -674,7 +674,7 @@ impl PyBBoxRTree {
 
         let max_id = max_bbox_id(ids.as_deref(), mins.len());
         self.tree = BBoxTree::bulk(py, dims, &mins, &maxs, ids.as_deref())?;
-        self.next_id = self.next_id.max(max_id + 1);
+        self.next_id = self.next_id.max(max_id.saturating_add(1));
         Ok(())
     }
 

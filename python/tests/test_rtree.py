@@ -46,6 +46,18 @@ def test_insert_returns_id():
     assert tree.insert([3.0, 3.0]) == 101
 
 
+def test_ids_saturate_instead_of_wrapping():
+    max_id = 2**63 - 1
+
+    inserted = PyRTree(dims=2)
+    assert inserted.insert([0.0, 0.0], data=max_id) == max_id
+    assert inserted.insert([1.0, 1.0]) == max_id
+
+    bulk_loaded = PyRTree(dims=2)
+    bulk_loaded.bulk_load([[0.0, 0.0]], data=[max_id])
+    assert bulk_loaded.insert([1.0, 1.0]) == max_id
+
+
 def test_repr_and_contains():
     tree = PyRTree(dims=2)
     tree.insert([1.0, 2.0])
