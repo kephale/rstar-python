@@ -1,6 +1,6 @@
 [package]
 name = "rstar-python"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT"
 description = "Python bindings for the rstar R*-tree spatial index"
@@ -14,4 +14,4 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.28", features = ["extension-module", "abi3-py310"] }
 numpy = "0.28"
-rstar = { version = "0.13", features = ["serde"] }
+rstar = "0.13"

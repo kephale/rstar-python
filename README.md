@@ -2,10 +2,10 @@
 
 Python bindings for the [rstar](https://github.com/georust/rstar) R*-tree spatial index library.
 
-A fast, **dynamic** spatial index for points in 2–8 dimensions: insert and remove
-points after construction, run nearest-neighbour and radius searches, and query
-axis-aligned bounding boxes. Each point can carry an integer id so queries can
-return references to *your* data, not just coordinates.
+A fast, **dynamic** spatial index for points and stored axis-aligned bounding
+boxes in 2–8 dimensions. Insert and remove items after construction, run
+nearest-neighbour and radius searches, and query spatial regions. Each item can
+carry an integer id so queries can return references to *your* data.
 
 ## Installation
 
@@ -35,7 +35,7 @@ easy prebuilt wheels and no C/C++ system dependency.
 
 ```python
 import numpy as np
-from rstar_python import PyRTree
+from rstar_python import PyBBoxRTree, PyRTree
 
 # Create a 3D R-tree
 tree = PyRTree(dims=3)
@@ -56,6 +56,10 @@ tree.nearest_neighbor([1.1, 2.1, 3.1])           # -> [1.0, 2.0, 3.0]
 tree.k_nearest_neighbors([1.1, 2.1, 3.1], k=2)   # -> [[...], [...]]
 tree.neighbors_within_radius([1.0, 2.0, 3.0], radius=1.0)
 tree.locate_in_envelope(min_corner=[0, 0, 0], max_corner=[2, 2, 2])
+tree.locate_in_envelope_ids([0, 0, 0], [2, 2, 2])  # stored ids, closed AABB
+
+# Remove an exact point+id when coordinates are shared by multiple items.
+tree.remove_item([1.0, 2.0, 3.0], data=10)
 
 # --- Vectorised, id-returning queries (scipy/sklearn style) ---
 query_pts = np.array([[1.1, 2.1, 3.1], [7.0, 8.0, 9.0]], dtype=np.float64)
@@ -70,18 +74,41 @@ len(tree)                  # number of points
 tree.dims                  # 3
 [1.0, 2.0, 3.0] in tree    # membership test
 tree.remove([1.0, 2.0, 3.0])
+
+# --- Stored bounding boxes ---
+boxes = PyBBoxRTree(dims=2)
+boxes.insert([0.0, 0.0], [2.0, 2.0], data=100)
+boxes.insert([2.0, 1.0], [3.0, 3.0])
+# Returns both ids: intersection uses closed bounds, so touching counts.
+boxes.intersection([1.0, 1.0], [2.0, 2.0])
+
+# Query many boxes in one native call. Results use CSR-style row offsets:
+# the matches for row i are ids[offsets[i]:offsets[i + 1]].
+query_mins = np.array([[0.0, 0.0], [5.0, 5.0]], dtype=np.float64)
+query_maxs = np.array([[2.0, 2.0], [6.0, 6.0]], dtype=np.float64)
+ids, offsets = boxes.intersection_batch(query_mins, query_maxs)
+
+boxes.remove_item([0.0, 0.0], [2.0, 2.0], data=100)
+
+# Bulk loading replaces the stored boxes.
+boxes.bulk_load(
+    min_corners=[[0.0, 0.0], [5.0, 5.0]],
+    max_corners=[[1.0, 1.0], [6.0, 6.0]],
+    data=[10, 20],
+)
 ```
 
 ## Features
 
-- Points in 2–8 dimensions
-- Dynamic `insert` / `remove`
-- Per-point integer ids (auto-assigned or supplied)
+- Points and stored axis-aligned bounding boxes in 2–8 dimensions
+- Dynamic insertion and exact item removal
+- Per-item integer ids (auto-assigned or supplied)
 - Nearest-neighbour and k-nearest-neighbour queries
 - Radius search and axis-aligned bounding-box (envelope) queries
-- Vectorised `query` / `query_radius` over a numpy array of points, returning
-  distances and ids
-- Bulk loading (lists or numpy arrays) for fast construction
+- Vectorised point `query` / `query_radius` and bounding-box
+  `intersection_batch` queries over NumPy arrays
+- NumPy-native batched intersection results without Python integer boxing
+- Bulk loading (lists or NumPy arrays) for fast construction
 - Type stubs (`py.typed`) for IDE and `mypy` support
 - Built on the fast Rust [rstar](https://github.com/georust/rstar) library
 
@@ -106,6 +133,9 @@ maturin develop --release
 
 # Run tests
 pytest python/tests -v
+
+# Run the bounding-box performance benchmark
+python python/benchmarks/benchmark_bbox_rtree.py
 ```
 
 ## License

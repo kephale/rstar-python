@@ -46,6 +46,18 @@ def test_insert_returns_id():
     assert tree.insert([3.0, 3.0]) == 101
 
 
+def test_ids_saturate_instead_of_wrapping():
+    max_id = 2**63 - 1
+
+    inserted = PyRTree(dims=2)
+    assert inserted.insert([0.0, 0.0], data=max_id) == max_id
+    assert inserted.insert([1.0, 1.0]) == max_id
+
+    bulk_loaded = PyRTree(dims=2)
+    bulk_loaded.bulk_load([[0.0, 0.0]], data=[max_id])
+    assert bulk_loaded.insert([1.0, 1.0]) == max_id
+
+
 def test_repr_and_contains():
     tree = PyRTree(dims=2)
     tree.insert([1.0, 2.0])
@@ -107,6 +119,15 @@ def test_bulk_load_numpy():
     assert np.allclose(tree.nearest_neighbor([0.1, 0.1]), [0.0, 0.0])
 
 
+def test_bulk_load_numpy_rejects_wrong_dtype():
+    tree = PyRTree(dims=2)
+    with pytest.raises(
+        ValueError,
+        match=r"points is a numpy array of dtype float32; expected float64",
+    ):
+        tree.bulk_load(np.zeros((2, 2), dtype=np.float32))
+
+
 def test_bulk_load_with_ids():
     tree = PyRTree(dims=2)
     tree.bulk_load([[0.0, 0.0], [5.0, 5.0]], data=[10, 20])
@@ -132,6 +153,21 @@ def test_locate_in_envelope():
         tree.insert(point)
     found = tree.locate_in_envelope([-0.5, -0.5], [2.0, 2.0])
     assert len(found) == 2
+
+
+def test_locate_in_envelope_ids_includes_boundaries():
+    tree = PyRTree(dims=2)
+    tree.bulk_load([[0.0, 0.0], [1.0, 1.0], [1.1, 0.5]], data=[10, 20, 30])
+    assert sorted(tree.locate_in_envelope_ids([0.0, 0.0], [1.0, 1.0])) == [10, 20]
+
+
+def test_remove_item_distinguishes_coincident_points():
+    tree = PyRTree(dims=2)
+    tree.insert([1.0, 2.0], data=10)
+    tree.insert([1.0, 2.0], data=20)
+    assert tree.remove_item([1.0, 2.0], 10) is True
+    assert tree.locate_in_envelope_ids([1.0, 2.0], [1.0, 2.0]) == [20]
+    assert tree.remove_item([1.0, 2.0], 10) is False
 
 
 def test_remove():

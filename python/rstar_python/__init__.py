@@ -1,3 +1,3 @@
-from .rstar_python import PyRTree, __version__
+from .rstar_python import PyBBoxRTree, PyRTree, __version__
 
-__all__ = ["PyRTree", "__version__"]
+__all__ = ["PyBBoxRTree", "PyRTree", "__version__"]

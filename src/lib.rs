@@ -1,9 +1,14 @@
+use std::ops::ControlFlow;
+
 use numpy::ndarray::{Array2, ArrayView2};
-use numpy::{IntoPyArray, PyArray2, PyReadonlyArray2};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArray,
+    PyUntypedArrayMethods,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
-use rstar::primitives::GeomWithData;
+use rstar::primitives::{GeomWithData, Rectangle};
 use rstar::{RTree, AABB};
 
 /// Minimum and maximum number of dimensions supported. rstar requires at
@@ -14,8 +19,14 @@ const MAX_DIMS: usize = 8;
 /// A point with an associated integer id, as stored in the tree.
 type Item<const N: usize> = GeomWithData<[f64; N], i64>;
 
+/// An axis-aligned bounding box with an associated integer id.
+type BBoxItem<const N: usize> = GeomWithData<Rectangle<[f64; N]>, i64>;
+
 /// Return type of [`PyRTree::query`]: `(distances, ids)` numpy arrays.
 type QueryResult<'py> = (Bound<'py, PyArray2<f64>>, Bound<'py, PyArray2<i64>>);
+
+/// Compressed sparse row result of a batched bounding-box intersection.
+type BBoxBatchResult<'py> = (Bound<'py, PyArray1<i64>>, Bound<'py, PyArray1<i64>>);
 
 /// Convert a slice into a fixed-size point, validating its length.
 fn to_point<const N: usize>(v: &[f64]) -> PyResult<[f64; N]> {
@@ -71,9 +82,23 @@ fn g_envelope<const N: usize>(
         .collect())
 }
 
+fn g_envelope_ids<const N: usize>(
+    t: &RTree<Item<N>>,
+    min: &[f64],
+    max: &[f64],
+) -> PyResult<Vec<i64>> {
+    let envelope = AABB::from_corners(to_point::<N>(min)?, to_point::<N>(max)?);
+    Ok(t.locate_in_envelope(envelope).map(|g| g.data).collect())
+}
+
 fn g_remove<const N: usize>(t: &mut RTree<Item<N>>, p: &[f64]) -> PyResult<bool> {
     let q = to_point::<N>(p)?;
     Ok(t.remove_at_point(q).is_some())
+}
+
+fn g_remove_item<const N: usize>(t: &mut RTree<Item<N>>, p: &[f64], id: i64) -> PyResult<bool> {
+    let item = GeomWithData::new(to_point::<N>(p)?, id);
+    Ok(t.remove(&item).is_some())
 }
 
 fn g_contains<const N: usize>(t: &RTree<Item<N>>, p: &[f64]) -> PyResult<bool> {
@@ -142,6 +167,128 @@ fn g_query_radius<const N: usize>(
     Ok(out)
 }
 
+fn g_bbox_insert<const N: usize>(
+    t: &mut RTree<BBoxItem<N>>,
+    min: &[f64],
+    max: &[f64],
+    id: i64,
+) -> PyResult<()> {
+    let rectangle = Rectangle::from_corners(to_point::<N>(min)?, to_point::<N>(max)?);
+    t.insert(GeomWithData::new(rectangle, id));
+    Ok(())
+}
+
+fn bbox_id(ids: Option<&[i64]>, index: usize) -> i64 {
+    ids.map_or(index as i64, |ids| ids[index])
+}
+
+fn g_bbox_bulk<const N: usize>(
+    py: Python<'_>,
+    min_corners: &[Vec<f64>],
+    max_corners: &[Vec<f64>],
+    ids: Option<&[i64]>,
+) -> PyResult<RTree<BBoxItem<N>>> {
+    let items = min_corners
+        .iter()
+        .zip(max_corners)
+        .enumerate()
+        .map(|(index, (min, max))| {
+            let rectangle = Rectangle::from_corners(to_point::<N>(min)?, to_point::<N>(max)?);
+            Ok(GeomWithData::new(rectangle, bbox_id(ids, index)))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+    Ok(py.detach(move || RTree::bulk_load(items)))
+}
+
+/// Fast NumPy bulk-load path. Rows are copied directly into fixed-size points,
+/// avoiding the two heap allocations per box incurred by `Vec<Vec<f64>>`.
+fn g_bbox_bulk_array<const N: usize>(
+    py: Python<'_>,
+    min_corners: ArrayView2<'_, f64>,
+    max_corners: ArrayView2<'_, f64>,
+    ids: Option<&[i64]>,
+) -> RTree<BBoxItem<N>> {
+    let items = if let (Some(mins), Some(maxs)) = (min_corners.as_slice(), max_corners.as_slice()) {
+        (0..min_corners.nrows())
+            .map(|index| {
+                let row_start = index * N;
+                let min = &mins[row_start..row_start + N];
+                let max = &maxs[row_start..row_start + N];
+                GeomWithData::new(
+                    Rectangle::from_corners(
+                        std::array::from_fn(|axis| min[axis]),
+                        std::array::from_fn(|axis| max[axis]),
+                    ),
+                    bbox_id(ids, index),
+                )
+            })
+            .collect()
+    } else {
+        (0..min_corners.nrows())
+            .map(|index| {
+                let min = std::array::from_fn(|axis| min_corners[[index, axis]]);
+                let max = std::array::from_fn(|axis| max_corners[[index, axis]]);
+                GeomWithData::new(Rectangle::from_corners(min, max), bbox_id(ids, index))
+            })
+            .collect()
+    };
+    py.detach(move || RTree::bulk_load(items))
+}
+
+fn g_bbox_intersection<const N: usize>(
+    t: &RTree<BBoxItem<N>>,
+    min: &[f64],
+    max: &[f64],
+) -> PyResult<Vec<i64>> {
+    let envelope = AABB::from_corners(to_point::<N>(min)?, to_point::<N>(max)?);
+    let mut ids = Vec::new();
+    let _: ControlFlow<()> = t.locate_in_envelope_intersecting_int(envelope, |item| {
+        ids.push(item.data);
+        ControlFlow::Continue(())
+    });
+    Ok(ids)
+}
+
+fn g_bbox_intersection_batch<const N: usize>(
+    py: Python<'_>,
+    t: &RTree<BBoxItem<N>>,
+    min_corners: ArrayView2<'_, f64>,
+    max_corners: ArrayView2<'_, f64>,
+) -> (Vec<i64>, Vec<i64>) {
+    let envelopes: Vec<_> = (0..min_corners.nrows())
+        .map(|index| {
+            AABB::from_corners(
+                std::array::from_fn(|axis| min_corners[[index, axis]]),
+                std::array::from_fn(|axis| max_corners[[index, axis]]),
+            )
+        })
+        .collect();
+
+    py.detach(|| {
+        let mut ids = Vec::new();
+        let mut offsets = Vec::with_capacity(envelopes.len() + 1);
+        offsets.push(0);
+        for envelope in envelopes {
+            let _: ControlFlow<()> = t.locate_in_envelope_intersecting_int(envelope, |item| {
+                ids.push(item.data);
+                ControlFlow::Continue(())
+            });
+            offsets.push(ids.len() as i64);
+        }
+        (ids, offsets)
+    })
+}
+
+fn g_bbox_remove_item<const N: usize>(
+    t: &mut RTree<BBoxItem<N>>,
+    min: &[f64],
+    max: &[f64],
+    id: i64,
+) -> PyResult<bool> {
+    let rectangle = Rectangle::from_corners(to_point::<N>(min)?, to_point::<N>(max)?);
+    Ok(t.remove(&GeomWithData::new(rectangle, id)).is_some())
+}
+
 // --- The dimension-tagged tree storage ----------------------------------------
 
 macro_rules! define_tree {
@@ -199,6 +346,81 @@ macro_rules! dispatch {
     };
 }
 
+macro_rules! define_bbox_tree {
+    ($(($variant:ident, $n:literal)),+ $(,)?) => {
+        enum BBoxTree { $($variant(RTree<BBoxItem<$n>>)),+ }
+
+        impl BBoxTree {
+            fn empty(dims: usize) -> PyResult<BBoxTree> {
+                match dims {
+                    $($n => Ok(BBoxTree::$variant(RTree::new())),)+
+                    _ => Err(PyValueError::new_err(format!(
+                        "Dimensions must be between {} and {}, got {}", MIN_DIMS, MAX_DIMS, dims
+                    ))),
+                }
+            }
+
+            fn bulk(
+                py: Python<'_>,
+                dims: usize,
+                min_corners: &[Vec<f64>],
+                max_corners: &[Vec<f64>],
+                ids: Option<&[i64]>,
+            ) -> PyResult<BBoxTree> {
+                match dims {
+                    $($n => Ok(BBoxTree::$variant(g_bbox_bulk::<$n>(py, min_corners, max_corners, ids)?)),)+
+                    _ => Err(PyValueError::new_err(format!(
+                        "Dimensions must be between {} and {}, got {}", MIN_DIMS, MAX_DIMS, dims
+                    ))),
+                }
+            }
+
+            fn bulk_array(
+                py: Python<'_>,
+                dims: usize,
+                min_corners: ArrayView2<'_, f64>,
+                max_corners: ArrayView2<'_, f64>,
+                ids: Option<&[i64]>,
+            ) -> PyResult<BBoxTree> {
+                match dims {
+                    $($n => Ok(BBoxTree::$variant(g_bbox_bulk_array::<$n>(py, min_corners, max_corners, ids))),)+
+                    _ => Err(PyValueError::new_err(format!(
+                        "Dimensions must be between {} and {}, got {}", MIN_DIMS, MAX_DIMS, dims
+                    ))),
+                }
+            }
+
+            fn dims(&self) -> usize {
+                match self { $(BBoxTree::$variant(_) => $n),+ }
+            }
+        }
+    };
+}
+
+define_bbox_tree!(
+    (D2, 2),
+    (D3, 3),
+    (D4, 4),
+    (D5, 5),
+    (D6, 6),
+    (D7, 7),
+    (D8, 8),
+);
+
+macro_rules! dispatch_bbox {
+    ($e:expr, $t:ident => $body:expr) => {
+        match $e {
+            BBoxTree::D2($t) => $body,
+            BBoxTree::D3($t) => $body,
+            BBoxTree::D4($t) => $body,
+            BBoxTree::D5($t) => $body,
+            BBoxTree::D6($t) => $body,
+            BBoxTree::D7($t) => $body,
+            BBoxTree::D8($t) => $body,
+        }
+    };
+}
+
 /// An R*-tree spatial index over points of 2 to 8 dimensions.
 ///
 /// Each point carries an integer id (auto-assigned or supplied via ``data``).
@@ -226,7 +448,7 @@ impl PyRTree {
     fn insert(&mut self, point: Vec<f64>, data: Option<i64>) -> PyResult<i64> {
         let id = data.unwrap_or(self.next_id);
         dispatch!(&mut self.tree, t => g_insert(t, &point, id)?);
-        self.next_id = self.next_id.max(id + 1);
+        self.next_id = self.next_id.max(id.saturating_add(1));
         Ok(id)
     }
 
@@ -256,7 +478,7 @@ impl PyRTree {
         };
         let max_id = ids.iter().copied().max().unwrap_or(-1);
         self.tree = Tree::bulk(self.tree.dims(), &pts, &ids)?;
-        self.next_id = self.next_id.max(max_id + 1);
+        self.next_id = self.next_id.max(max_id.saturating_add(1));
         Ok(())
     }
 
@@ -285,6 +507,15 @@ impl PyRTree {
         max_corner: Vec<f64>,
     ) -> PyResult<Vec<Vec<f64>>> {
         dispatch!(&self.tree, t => g_envelope(t, &min_corner, &max_corner))
+    }
+
+    /// Return the ids of all points inside the closed axis-aligned box.
+    fn locate_in_envelope_ids(
+        &self,
+        min_corner: Vec<f64>,
+        max_corner: Vec<f64>,
+    ) -> PyResult<Vec<i64>> {
+        dispatch!(&self.tree, t => g_envelope_ids(t, &min_corner, &max_corner))
     }
 
     /// Vectorised k-NN query (scipy/sklearn style).
@@ -326,6 +557,11 @@ impl PyRTree {
         dispatch!(&mut self.tree, t => g_remove(t, &point))
     }
 
+    /// Remove the point with exactly matching coordinates and id.
+    fn remove_item(&mut self, point: Vec<f64>, data: i64) -> PyResult<bool> {
+        dispatch!(&mut self.tree, t => g_remove_item(t, &point, data))
+    }
+
     /// Number of dimensions this tree indexes.
     #[getter]
     fn dims(&self) -> usize {
@@ -350,6 +586,166 @@ impl PyRTree {
     }
 }
 
+/// An R*-tree spatial index over axis-aligned bounding boxes in 2 to 8 dimensions.
+///
+/// Each box carries an integer id (auto-assigned or supplied via ``data``).
+/// Intersection queries return ids for every box whose closed bounds overlap or
+/// touch the query bounds. Corner arguments are normalized per axis, so either
+/// corner order is accepted for inserts and queries.
+///
+/// Bulk loading and batched intersections release the GIL during native tree
+/// operations. Callers must synchronize mutation of the same instance while a
+/// batch is in flight; otherwise PyO3 may raise ``RuntimeError: Already borrowed``.
+#[pyclass]
+struct PyBBoxRTree {
+    tree: BBoxTree,
+    next_id: i64,
+}
+
+#[pymethods]
+impl PyBBoxRTree {
+    #[new]
+    fn new(dims: usize) -> PyResult<Self> {
+        Ok(PyBBoxRTree {
+            tree: BBoxTree::empty(dims)?,
+            next_id: 0,
+        })
+    }
+
+    /// Insert a bounding box, returning its id.
+    /// If ``data`` is omitted, an incrementing id is assigned automatically.
+    #[pyo3(signature = (min_corner, max_corner, data = None))]
+    fn insert(
+        &mut self,
+        min_corner: Vec<f64>,
+        max_corner: Vec<f64>,
+        data: Option<i64>,
+    ) -> PyResult<i64> {
+        let id = data.unwrap_or(self.next_id);
+        dispatch_bbox!(&mut self.tree, t => {
+            g_bbox_insert(t, &min_corner, &max_corner, id)?
+        });
+        self.next_id = self.next_id.max(id.saturating_add(1));
+        Ok(id)
+    }
+
+    /// Build the tree from bounding boxes at once (replaces existing contents).
+    /// Corner batches may be lists of lists or 2-D numpy ``float64`` arrays.
+    #[pyo3(signature = (min_corners, max_corners, data = None))]
+    fn bulk_load(
+        &mut self,
+        py: Python<'_>,
+        min_corners: &Bound<'_, PyAny>,
+        max_corners: &Bound<'_, PyAny>,
+        data: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<()> {
+        let dims = self.tree.dims();
+
+        // Keep NumPy batches in ndarray views instead of allocating one Vec
+        // per row. Nested Python sequences retain the compatibility path.
+        if let (Ok(min_array), Ok(max_array)) = (
+            min_corners.extract::<PyReadonlyArray2<f64>>(),
+            max_corners.extract::<PyReadonlyArray2<f64>>(),
+        ) {
+            let mins = min_array.as_array();
+            let maxs = max_array.as_array();
+            let num_boxes = validate_bbox_array_shapes(&mins, &maxs, dims)?;
+            let ids = extract_bbox_ids(data, num_boxes)?;
+            if num_boxes == 0 {
+                self.tree = BBoxTree::empty(dims)?;
+                return Ok(());
+            }
+
+            let max_id = max_bbox_id(ids.as_deref(), num_boxes);
+            self.tree = BBoxTree::bulk_array(py, dims, mins, maxs, ids.as_deref())?;
+            self.next_id = self.next_id.max(max_id.saturating_add(1));
+            return Ok(());
+        }
+
+        let mins = extract_bbox_corners(min_corners, dims, "min_corners")?;
+        let maxs = extract_bbox_corners(max_corners, dims, "max_corners")?;
+        if mins.len() != maxs.len() {
+            return Err(PyValueError::new_err(format!(
+                "min_corners and max_corners must have the same number of rows, got {} and {}",
+                mins.len(),
+                maxs.len()
+            )));
+        }
+        let ids = extract_bbox_ids(data, mins.len())?;
+        if mins.is_empty() {
+            self.tree = BBoxTree::empty(dims)?;
+            return Ok(());
+        }
+
+        let max_id = max_bbox_id(ids.as_deref(), mins.len());
+        self.tree = BBoxTree::bulk(py, dims, &mins, &maxs, ids.as_deref())?;
+        self.next_id = self.next_id.max(max_id.saturating_add(1));
+        Ok(())
+    }
+
+    /// Return ids for boxes whose closed bounds overlap or touch the query.
+    fn intersection(&self, min_corner: Vec<f64>, max_corner: Vec<f64>) -> PyResult<Vec<i64>> {
+        dispatch_bbox!(&self.tree, t => {
+            g_bbox_intersection(t, &min_corner, &max_corner)
+        })
+    }
+
+    /// Query many boxes at once, returning ids and CSR row offsets.
+    ///
+    /// Results for query row ``i`` are ``ids[offsets[i]:offsets[i + 1]]``.
+    fn intersection_batch<'py>(
+        &self,
+        py: Python<'py>,
+        min_corners: &Bound<'py, PyAny>,
+        max_corners: &Bound<'py, PyAny>,
+    ) -> PyResult<BBoxBatchResult<'py>> {
+        let min_array = extract_float_array2(min_corners, "min_corners")?;
+        let max_array = extract_float_array2(max_corners, "max_corners")?;
+        let mins = min_array.as_array();
+        let maxs = max_array.as_array();
+        validate_bbox_array_shapes(&mins, &maxs, self.tree.dims())?;
+        let (ids, offsets) = dispatch_bbox!(&self.tree, t => {
+            g_bbox_intersection_batch(py, t, mins, maxs)
+        });
+        Ok((ids.into_pyarray(py), offsets.into_pyarray(py)))
+    }
+
+    /// Remove the box with exactly matching normalized geometry and id.
+    fn remove_item(
+        &mut self,
+        min_corner: Vec<f64>,
+        max_corner: Vec<f64>,
+        data: i64,
+    ) -> PyResult<bool> {
+        dispatch_bbox!(&mut self.tree, t => {
+            g_bbox_remove_item(t, &min_corner, &max_corner, data)
+        })
+    }
+
+    /// Number of dimensions this tree indexes.
+    #[getter]
+    fn dims(&self) -> usize {
+        self.tree.dims()
+    }
+
+    /// Number of bounding boxes in the tree.
+    fn size(&self) -> usize {
+        dispatch_bbox!(&self.tree, t => t.size())
+    }
+
+    fn __len__(&self) -> usize {
+        self.size()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "PyBBoxRTree(dims={}, size={})",
+            self.tree.dims(),
+            self.size()
+        )
+    }
+}
+
 /// Accept either a list-of-lists or a 2-D numpy ``float64`` array.
 fn extract_points(obj: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
     if let Ok(arr) = obj.extract::<PyReadonlyArray2<f64>>() {
@@ -359,15 +755,144 @@ fn extract_points(obj: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
             .map(|row| row.to_vec())
             .collect())
     } else {
+        reject_wrong_dtype(obj, "points", "float64")?;
         obj.extract::<Vec<Vec<f64>>>().map_err(|_| {
             PyValueError::new_err("points must be a list of lists or a 2-D float64 numpy array")
         })
     }
 }
 
+/// NumPy arrays that fail a typed extraction would otherwise fall through to
+/// the generic sequence path, silently making large inputs much slower.
+fn reject_wrong_dtype(obj: &Bound<'_, PyAny>, name: &str, want: &str) -> PyResult<()> {
+    if let Ok(array) = obj.cast::<PyUntypedArray>() {
+        return Err(PyValueError::new_err(format!(
+            "{} is a numpy array of dtype {}; expected {}. Use .astype(np.{})",
+            name,
+            array.dtype(),
+            want,
+            want
+        )));
+    }
+    Ok(())
+}
+
+fn extract_float_array2<'py>(
+    obj: &Bound<'py, PyAny>,
+    name: &str,
+) -> PyResult<PyReadonlyArray2<'py, f64>> {
+    if let Ok(array) = obj.extract::<PyReadonlyArray2<f64>>() {
+        Ok(array)
+    } else {
+        reject_wrong_dtype(obj, name, "float64")?;
+        Err(PyValueError::new_err(format!(
+            "{} must be a 2-D float64 numpy array",
+            name
+        )))
+    }
+}
+
+fn validate_bbox_array_shapes(
+    min_corners: &ArrayView2<'_, f64>,
+    max_corners: &ArrayView2<'_, f64>,
+    dims: usize,
+) -> PyResult<usize> {
+    if min_corners.ncols() != dims {
+        return Err(PyValueError::new_err(format!(
+            "min_corners must have {} columns, got {}",
+            dims,
+            min_corners.ncols()
+        )));
+    }
+    if max_corners.ncols() != dims {
+        return Err(PyValueError::new_err(format!(
+            "max_corners must have {} columns, got {}",
+            dims,
+            max_corners.ncols()
+        )));
+    }
+    if min_corners.nrows() != max_corners.nrows() {
+        return Err(PyValueError::new_err(format!(
+            "min_corners and max_corners must have the same number of rows, got {} and {}",
+            min_corners.nrows(),
+            max_corners.nrows()
+        )));
+    }
+    Ok(min_corners.nrows())
+}
+
+fn extract_bbox_ids(
+    data: Option<&Bound<'_, PyAny>>,
+    num_boxes: usize,
+) -> PyResult<Option<Vec<i64>>> {
+    let Some(data) = data else {
+        return Ok(None);
+    };
+    let ids = if let Ok(array) = data.extract::<PyReadonlyArray1<i64>>() {
+        array.as_array().iter().copied().collect()
+    } else {
+        reject_wrong_dtype(data, "data", "int64")?;
+        data.extract::<Vec<i64>>().map_err(|_| {
+            PyValueError::new_err("data must be an integer sequence or a 1-D int64 numpy array")
+        })?
+    };
+    if ids.len() != num_boxes {
+        return Err(PyValueError::new_err(format!(
+            "Expected {} ids to match {} boxes, got {}",
+            num_boxes,
+            num_boxes,
+            ids.len()
+        )));
+    }
+    Ok(Some(ids))
+}
+
+fn max_bbox_id(ids: Option<&[i64]>, num_boxes: usize) -> i64 {
+    ids.and_then(|ids| ids.iter().copied().max())
+        .unwrap_or(num_boxes as i64 - 1)
+}
+
+fn extract_bbox_corners(
+    obj: &Bound<'_, PyAny>,
+    dims: usize,
+    name: &str,
+) -> PyResult<Vec<Vec<f64>>> {
+    if let Ok(arr) = obj.extract::<PyReadonlyArray2<f64>>() {
+        let view = arr.as_array();
+        if view.ncols() != dims {
+            return Err(PyValueError::new_err(format!(
+                "{} must have {} columns, got {}",
+                name,
+                dims,
+                view.ncols()
+            )));
+        }
+        Ok(view.outer_iter().map(|row| row.to_vec()).collect())
+    } else {
+        reject_wrong_dtype(obj, name, "float64")?;
+        let rows = obj.extract::<Vec<Vec<f64>>>().map_err(|_| {
+            PyValueError::new_err(format!(
+                "{} must be a list of lists or a 2-D float64 numpy array",
+                name
+            ))
+        })?;
+        if let Some((index, row)) = rows.iter().enumerate().find(|(_, row)| row.len() != dims) {
+            return Err(PyValueError::new_err(format!(
+                "{} row {} must have {} dimensions, got {}",
+                name,
+                index,
+                dims,
+                row.len()
+            )));
+        }
+        Ok(rows)
+    }
+}
+
 #[pymodule]
 fn rstar_python(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyRTree>()?;
+    m.add_class::<PyBBoxRTree>()?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     Ok(())
 }
