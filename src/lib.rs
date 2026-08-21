@@ -206,10 +206,11 @@ fn g_bbox_bulk_array<const N: usize>(
     ids: Option<&[i64]>,
 ) -> RTree<BBoxItem<N>> {
     let items = if let (Some(mins), Some(maxs)) = (min_corners.as_slice(), max_corners.as_slice()) {
-        mins.chunks_exact(N)
-            .zip(maxs.chunks_exact(N))
-            .enumerate()
-            .map(|(index, (min, max))| {
+        (0..min_corners.nrows())
+            .map(|index| {
+                let row_start = index * N;
+                let min = &mins[row_start..row_start + N];
+                let max = &maxs[row_start..row_start + N];
                 GeomWithData::new(
                     Rectangle::from_corners(
                         std::array::from_fn(|axis| min[axis]),
