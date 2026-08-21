@@ -27,6 +27,17 @@ def test_insert_ids_and_intersection_semantics():
     assert tree.intersection([6.1, 6.1], [7.9, 7.9]) == []
 
 
+def test_bulk_load_without_data_assigns_ids_and_advances_counter():
+    tree = PyBBoxRTree(dims=2)
+    mins = np.array([[0.0, 0.0], [5.0, 5.0]], dtype=np.float64)
+    maxs = mins + 1.0
+    tree.bulk_load(mins, maxs)
+
+    assert tree.intersection([0.5, 0.5], [0.5, 0.5]) == [0]
+    assert tree.intersection([5.5, 5.5], [5.5, 5.5]) == [1]
+    assert tree.insert([10.0, 10.0], [11.0, 11.0]) == 2
+
+
 def test_ids_saturate_instead_of_wrapping():
     max_id = 2**63 - 1
 
