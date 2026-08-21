@@ -63,6 +63,32 @@ def test_numpy_and_batched_intersection_results():
     assert empty_offsets.tolist() == [0]
 
 
+def test_numpy_inputs_reject_wrong_dtypes():
+    tree = PyBBoxRTree(dims=2)
+    float32_corners = np.zeros((2, 2), dtype=np.float32)
+    float64_corners = np.zeros((2, 2), dtype=np.float64)
+
+    with pytest.raises(
+        ValueError,
+        match=r"min_corners is a numpy array of dtype float32; expected float64",
+    ):
+        tree.bulk_load(float32_corners, float64_corners)
+    with pytest.raises(
+        ValueError,
+        match=r"data is a numpy array of dtype int32; expected int64",
+    ):
+        tree.bulk_load(
+            float64_corners,
+            float64_corners,
+            data=np.arange(2, dtype=np.int32),
+        )
+    with pytest.raises(
+        ValueError,
+        match=r"min_corners is a numpy array of dtype float32; expected float64",
+    ):
+        tree.intersection_batch(float32_corners, float64_corners)
+
+
 def test_remove_item_distinguishes_coincident_boxes():
     tree = PyBBoxRTree(dims=2)
     tree.insert([0.0, 0.0], [1.0, 1.0], data=10)

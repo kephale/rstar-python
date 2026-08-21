@@ -107,6 +107,15 @@ def test_bulk_load_numpy():
     assert np.allclose(tree.nearest_neighbor([0.1, 0.1]), [0.0, 0.0])
 
 
+def test_bulk_load_numpy_rejects_wrong_dtype():
+    tree = PyRTree(dims=2)
+    with pytest.raises(
+        ValueError,
+        match=r"points is a numpy array of dtype float32; expected float64",
+    ):
+        tree.bulk_load(np.zeros((2, 2), dtype=np.float32))
+
+
 def test_bulk_load_with_ids():
     tree = PyRTree(dims=2)
     tree.bulk_load([[0.0, 0.0], [5.0, 5.0]], data=[10, 20])

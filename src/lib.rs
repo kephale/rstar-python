@@ -1,7 +1,10 @@
 use std::ops::ControlFlow;
 
 use numpy::ndarray::{Array2, ArrayView2};
-use numpy::{IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2};
+use numpy::{
+    IntoPyArray, PyArray1, PyArray2, PyReadonlyArray1, PyReadonlyArray2, PyUntypedArray,
+    PyUntypedArrayMethods,
+};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyAny;
@@ -688,11 +691,13 @@ impl PyBBoxRTree {
     fn intersection_batch<'py>(
         &self,
         py: Python<'py>,
-        min_corners: PyReadonlyArray2<'py, f64>,
-        max_corners: PyReadonlyArray2<'py, f64>,
+        min_corners: &Bound<'py, PyAny>,
+        max_corners: &Bound<'py, PyAny>,
     ) -> PyResult<BBoxBatchResult<'py>> {
-        let mins = min_corners.as_array();
-        let maxs = max_corners.as_array();
+        let min_array = extract_float_array2(min_corners, "min_corners")?;
+        let max_array = extract_float_array2(max_corners, "max_corners")?;
+        let mins = min_array.as_array();
+        let maxs = max_array.as_array();
         validate_bbox_array_shapes(&mins, &maxs, self.tree.dims())?;
         let (ids, offsets) = dispatch_bbox!(&self.tree, t => {
             g_bbox_intersection_batch(py, t, mins, maxs)
@@ -745,9 +750,40 @@ fn extract_points(obj: &Bound<'_, PyAny>) -> PyResult<Vec<Vec<f64>>> {
             .map(|row| row.to_vec())
             .collect())
     } else {
+        reject_wrong_dtype(obj, "points", "float64")?;
         obj.extract::<Vec<Vec<f64>>>().map_err(|_| {
             PyValueError::new_err("points must be a list of lists or a 2-D float64 numpy array")
         })
+    }
+}
+
+/// NumPy arrays that fail a typed extraction would otherwise fall through to
+/// the generic sequence path, silently making large inputs much slower.
+fn reject_wrong_dtype(obj: &Bound<'_, PyAny>, name: &str, want: &str) -> PyResult<()> {
+    if let Ok(array) = obj.cast::<PyUntypedArray>() {
+        return Err(PyValueError::new_err(format!(
+            "{} is a numpy array of dtype {}; expected {}. Use .astype(np.{})",
+            name,
+            array.dtype(),
+            want,
+            want
+        )));
+    }
+    Ok(())
+}
+
+fn extract_float_array2<'py>(
+    obj: &Bound<'py, PyAny>,
+    name: &str,
+) -> PyResult<PyReadonlyArray2<'py, f64>> {
+    if let Ok(array) = obj.extract::<PyReadonlyArray2<f64>>() {
+        Ok(array)
+    } else {
+        reject_wrong_dtype(obj, name, "float64")?;
+        Err(PyValueError::new_err(format!(
+            "{} must be a 2-D float64 numpy array",
+            name
+        )))
     }
 }
 
@@ -790,6 +826,7 @@ fn extract_bbox_ids(
     let ids = if let Ok(array) = data.extract::<PyReadonlyArray1<i64>>() {
         array.as_array().iter().copied().collect()
     } else {
+        reject_wrong_dtype(data, "data", "int64")?;
         data.extract::<Vec<i64>>().map_err(|_| {
             PyValueError::new_err("data must be an integer sequence or a 1-D int64 numpy array")
         })?
@@ -827,6 +864,7 @@ fn extract_bbox_corners(
         }
         Ok(view.outer_iter().map(|row| row.to_vec()).collect())
     } else {
+        reject_wrong_dtype(obj, name, "float64")?;
         let rows = obj.extract::<Vec<Vec<f64>>>().map_err(|_| {
             PyValueError::new_err(format!(
                 "{} must be a list of lists or a 2-D float64 numpy array",
