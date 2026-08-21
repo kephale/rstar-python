@@ -52,6 +52,11 @@ class PyRTree:
     ) -> list[list[float]]:
         """Coordinates of all points inside the axis-aligned box."""
 
+    def locate_in_envelope_ids(
+        self, min_corner: Sequence[float], max_corner: Sequence[float]
+    ) -> list[int]:
+        """Ids of all points inside the closed axis-aligned box."""
+
     def query(
         self, points: npt.NDArray[np.float64], k: int = ...
     ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.int64]]:
@@ -69,9 +74,55 @@ class PyRTree:
     def remove(self, point: Sequence[float]) -> bool:
         """Remove a point by coordinates. Returns ``True`` if one was removed."""
 
+    def remove_item(self, point: Sequence[float], data: int) -> bool:
+        """Remove the point with exactly matching coordinates and id."""
+
     def size(self) -> int:
         """Number of points in the tree."""
 
     def __len__(self) -> int: ...
     def __contains__(self, point: Sequence[float]) -> bool: ...
+    def __repr__(self) -> str: ...
+
+class PyBBoxRTree:
+    """An R*-tree spatial index over axis-aligned bounding boxes."""
+
+    def __init__(self, dims: int) -> None: ...
+    @property
+    def dims(self) -> int:
+        """Number of dimensions this tree indexes."""
+
+    def insert(
+        self,
+        min_corner: Sequence[float],
+        max_corner: Sequence[float],
+        data: int | None = ...,
+    ) -> int:
+        """Insert a bounding box, returning its id."""
+
+    def bulk_load(
+        self,
+        min_corners: Sequence[Sequence[float]] | npt.NDArray[np.float64],
+        max_corners: Sequence[Sequence[float]] | npt.NDArray[np.float64],
+        data: Sequence[int] | None = ...,
+    ) -> None:
+        """Build from bounding boxes at once, replacing existing contents."""
+
+    def intersection(
+        self, min_corner: Sequence[float], max_corner: Sequence[float]
+    ) -> list[int]:
+        """Ids of boxes whose closed bounds overlap or touch the query."""
+
+    def remove_item(
+        self,
+        min_corner: Sequence[float],
+        max_corner: Sequence[float],
+        data: int,
+    ) -> bool:
+        """Remove the box with exactly matching normalized geometry and id."""
+
+    def size(self) -> int:
+        """Number of bounding boxes in the tree."""
+
+    def __len__(self) -> int: ...
     def __repr__(self) -> str: ...

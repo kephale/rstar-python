@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `PyRTree.locate_in_envelope_ids()` for stored ids within a closed bounding box.
+- `PyRTree.remove_item()` for exact point-and-id removal when points coincide.
+- `PyBBoxRTree`, a 2–8 dimensional index for stored axis-aligned bounding boxes,
+  with insertion, bulk loading, closed-boundary intersection, and exact removal.
+
 ## [0.1.0] - 2026-06-07
 
 ### Added

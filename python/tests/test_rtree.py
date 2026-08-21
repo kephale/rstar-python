@@ -134,6 +134,21 @@ def test_locate_in_envelope():
     assert len(found) == 2
 
 
+def test_locate_in_envelope_ids_includes_boundaries():
+    tree = PyRTree(dims=2)
+    tree.bulk_load([[0.0, 0.0], [1.0, 1.0], [1.1, 0.5]], data=[10, 20, 30])
+    assert sorted(tree.locate_in_envelope_ids([0.0, 0.0], [1.0, 1.0])) == [10, 20]
+
+
+def test_remove_item_distinguishes_coincident_points():
+    tree = PyRTree(dims=2)
+    tree.insert([1.0, 2.0], data=10)
+    tree.insert([1.0, 2.0], data=20)
+    assert tree.remove_item([1.0, 2.0], 10) is True
+    assert tree.locate_in_envelope_ids([1.0, 2.0], [1.0, 2.0]) == [20]
+    assert tree.remove_item([1.0, 2.0], 10) is False
+
+
 def test_remove():
     tree = PyRTree(dims=2)
     tree.insert([1.0, 2.0])
