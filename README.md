@@ -52,11 +52,6 @@ scipy is faster for a static k-NN workload. rstar-python is faster when the
 index changes over time or when you query boxes. `Rtree` has no batch query
 API, so its timings include a Python loop over queries.
 
-## Used by
-
-- [royerlab/tracksdata](https://github.com/royerlab/tracksdata): spatial
-  filtering of tracking graph nodes
-
 ## Usage
 
 ```python
