@@ -7,6 +7,7 @@ name = "rstar-python"
 version = "0.2.0"
 description = "Python bindings for the rstar R*-tree spatial index"
 readme = "README.md"
+keywords = ["r-tree", "rstar", "spatial index", "nearest neighbor", "bounding box", "rust"]
 license = {text = "MIT"}
 requires-python = ">=3.10"
 authors = [
@@ -21,6 +22,7 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Programming Language :: Rust",
     "Topic :: Scientific/Engineering",
     "Topic :: Software Development :: Libraries",
@@ -36,6 +38,7 @@ dependencies = [
 Homepage = "https://github.com/kephale/rstar-python"
 Repository = "https://github.com/kephale/rstar-python"
 Issues = "https://github.com/kephale/rstar-python/issues"
+Changelog = "https://github.com/kephale/rstar-python/blob/main/CHANGELOG.md"
 
 [tool.maturin]
 features = ["pyo3/extension-module"]

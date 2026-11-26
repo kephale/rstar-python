@@ -220,3 +220,13 @@ def test_query_radius_vectorized():
     assert len(result) == 2
     assert sorted(result[0]) == [0, 1]
     assert result[1] == [2]
+
+
+def test_short_names_are_aliases():
+    import rstar_python
+
+    assert rstar_python.RTree is rstar_python.PyRTree
+    assert rstar_python.BBoxRTree is rstar_python.PyBBoxRTree
+    tree = rstar_python.RTree(dims=2)
+    tree.insert([0.0, 0.0])
+    assert len(tree) == 1
