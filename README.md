@@ -1,5 +1,10 @@
 # rstar-python
 
+[![PyPI](https://img.shields.io/pypi/v/rstar-python.svg)](https://pypi.org/project/rstar-python/)
+[![Python versions](https://img.shields.io/pypi/pyversions/rstar-python.svg)](https://pypi.org/project/rstar-python/)
+[![CI](https://github.com/kephale/rstar-python/actions/workflows/ci.yml/badge.svg)](https://github.com/kephale/rstar-python/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Python bindings for the [rstar](https://github.com/georust/rstar) R*-tree spatial index library.
 
 A fast, **dynamic** spatial index for points and stored axis-aligned bounding
@@ -31,14 +36,35 @@ a static array and only need point/radius queries. Reach for rstar-python when
 you need to **mutate the index over time** or run **bounding-box queries** — with
 easy prebuilt wheels and no C/C++ system dependency.
 
+## Benchmarks
+
+Measured with `python/benchmarks/benchmark_compare.py` (3-D, uniform random
+data, best of 3) on an AMD Ryzen 7 PRO 5850U, Python 3.12, scipy 1.18 and
+Rtree 1.4. Times are in milliseconds; lower is better.
+
+| Workload | rstar-python | scipy `cKDTree` | `Rtree` |
+| --- | ---: | ---: | ---: |
+| Build from 200k points, 20k k-NN queries (k=8) | 125 | **100** | 2043 |
+| Insert 20k points one by one, box query every 100 | **28** | 439 (rebuilt per query) | 614 |
+| Bulk-load 200k boxes, 20k box intersection queries | **82** | — | 1422 |
+
+scipy is faster for a static k-NN workload. rstar-python is faster when the
+index changes over time or when you query boxes. `Rtree` has no batch query
+API, so its timings include a Python loop over queries.
+
+## Used by
+
+- [royerlab/tracksdata](https://github.com/royerlab/tracksdata): spatial
+  filtering of tracking graph nodes
+
 ## Usage
 
 ```python
 import numpy as np
-from rstar_python import PyBBoxRTree, PyRTree
+from rstar_python import BBoxRTree, RTree
 
 # Create a 3D R-tree
-tree = PyRTree(dims=3)
+tree = RTree(dims=3)
 
 # Insert points. insert() returns the point's id.
 tree.insert([1.0, 2.0, 3.0])            # -> 0  (auto-assigned)
@@ -76,7 +102,7 @@ tree.dims                  # 3
 tree.remove([1.0, 2.0, 3.0])
 
 # --- Stored bounding boxes ---
-boxes = PyBBoxRTree(dims=2)
+boxes = BBoxRTree(dims=2)
 boxes.insert([0.0, 0.0], [2.0, 2.0], data=100)
 boxes.insert([2.0, 1.0], [3.0, 3.0])
 # Returns both ids: intersection uses closed bounds, so touching counts.
@@ -97,6 +123,9 @@ boxes.bulk_load(
     data=[10, 20],
 )
 ```
+
+`RTree` and `BBoxRTree` are the same classes as `PyRTree` and `PyBBoxRTree`;
+both names work.
 
 ## Features
 
@@ -136,6 +165,9 @@ pytest python/tests -v
 
 # Run the bounding-box performance benchmark
 python python/benchmarks/benchmark_bbox_rtree.py
+
+# Compare with scipy and Rtree (pip install scipy rtree)
+python python/benchmarks/benchmark_compare.py
 ```
 
 ## License
